@@ -1,0 +1,62 @@
+name: release
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Release tag to create
+        default: v0.1.0
+
+permissions:
+  contents: write
+
+jobs:
+  windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Fetch wintun.dll
+        shell: pwsh
+        run: |
+          Invoke-WebRequest https://www.wintun.net/builds/wintun-0.14.1.zip -OutFile wintun.zip
+          $hash = (Get-FileHash wintun.zip -Algorithm SHA256).Hash.ToLower()
+          Write-Host "wintun.zip sha256: $hash"
+          if ($hash -ne "07c256185d6ee3652e09fa55c0b673e2624b565e02c4b9091c79ca7d2f24ef51") { throw "unexpected wintun.zip hash" }
+          Expand-Archive wintun.zip -DestinationPath wintun
+          "OVPN_WINTUN_DLL=$PWD\wintun\wintun\bin\amd64\wintun.dll" | Out-File -FilePath $env:GITHUB_ENV -Append
+      - run: cargo test
+      # OVPN_WINTUN_DLL embeds the driver DLL, so ovpn.exe works on its own.
+      - run: cargo build --release
+      - name: Bundle ovpn.exe with the README
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory dist-zip | Out-Null
+          Copy-Item target/release/ovpn.exe dist-zip/
+          Copy-Item README.md dist-zip/
+          Compress-Archive dist-zip/* ovpn-windows-x86_64.zip
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ovpn-windows-x86_64
+          path: ovpn-windows-x86_64.zip
+      - uses: softprops/action-gh-release@v2
+        if: startsWith(github.ref, 'refs/tags/') || inputs.tag != ''
+        with:
+          tag_name: ${{ inputs.tag || github.ref_name }}
+          target_commitish: ${{ github.sha }}
+          name: ovpn ${{ inputs.tag || github.ref_name }}
+          files: |
+            ovpn-windows-x86_64.zip
+            target/release/ovpn.exe
+          body: |
+            `ovpn.exe` for Windows x86_64: a portable OpenVPN client (TCP). It works on its own (the Wintun driver DLL is built in).
+
+            Put your Windscribe TCP `.ovpn` file next to `ovpn.exe` and double-click it, or in an Administrator terminal:
+
+            ```
+            .\ovpn.exe .\Windscribe-TCP.ovpn
+            ```
+
+            It asks for the OpenVPN username and password (or use `--auth-file creds.txt`). See the README for details.
