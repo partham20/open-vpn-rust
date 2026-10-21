@@ -97,6 +97,8 @@ fn main() -> std::process::ExitCode {
                 .unwrap_or_else(|_| format!("ovpn={level},warn").into()),
         )
         .with_target(false)
+        // Older Windows consoles print ANSI colour codes literally.
+        .with_ansi(!cfg!(windows))
         .init();
     let rt = tokio::runtime::Runtime::new().expect("tokio runtime");
     let code = match rt.block_on(run(args)) {
@@ -212,7 +214,8 @@ async fn run(args: Args) -> Result<()> {
             }
             Ok(Outcome::Reconnect(why)) => tracing::warn!("connection lost ({why}); reconnecting"),
             Err(e) => {
-                if e.downcast_ref::<Fatal>().is_some() {
+                // A certificate problem won't go away by retrying.
+                if e.downcast_ref::<Fatal>().is_some() || format!("{e:#}").contains("certificate") {
                     return Err(e);
                 }
                 tracing::warn!("{e:#}");

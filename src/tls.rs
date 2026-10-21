@@ -29,28 +29,33 @@ impl ServerCertVerifier for OvpnVerifier {
         _ocsp: &[u8],
         now: UnixTime,
     ) -> Result<ServerCertVerified, rustls::Error> {
+        for c in std::iter::once(end_entity).chain(intermediates) {
+            if let Ok((_, x)) = x509_parser::parse_x509_certificate(c) {
+                tracing::debug!("server cert: {} (issuer {})", x.subject(), x.issuer());
+            }
+        }
         let cert = webpki::EndEntityCert::try_from(end_entity)
             .map_err(|e| rustls::Error::General(format!("bad server certificate: {e}")))?;
-        // remote-cert-tls server: the cert must carry the serverAuth EKU.
-        let usage = if self.require_server_eku {
-            webpki::KeyUsage::required(EKU_SERVER_AUTH)
-        } else {
-            webpki::KeyUsage::server_auth()
-        };
+        // Like OpenVPN, only the server's own certificate is checked for
+        // extended key usage (below); CA certificates in the chain often
+        // carry none, which webpki's built-in policies would reject.
         cert.verify_for_usage(
             self.provider.signature_verification_algorithms.all,
             &self.roots,
             intermediates,
             now,
-            usage,
+            AnyEku,
             None,
             None,
         )
         .map_err(|e| {
             rustls::Error::General(format!(
-                "server certificate not signed by the config's CA: {e}"
+                "server certificate rejected (does the .ovpn's <ca> belong to this server?): {e:?}"
             ))
         })?;
+        if self.require_server_eku {
+            check_server_eku(end_entity).map_err(|e| rustls::Error::General(e.to_string()))?;
+        }
         if let Some((name, kind)) = &self.x509_name {
             check_x509_name(end_entity, name, kind)
                 .map_err(|e| rustls::Error::General(e.to_string()))?;
@@ -93,8 +98,40 @@ impl ServerCertVerifier for OvpnVerifier {
     }
 }
 
-/// DER body of OID 1.3.6.1.5.5.7.3.1 (id-kp-serverAuth).
-const EKU_SERVER_AUTH: &[u8] = &[0x2b, 0x06, 0x01, 0x05, 0x05, 0x07, 0x03, 0x01];
+/// Accepts any extended key usage on every certificate in the chain.
+struct AnyEku;
+
+impl webpki::ExtendedKeyUsageValidator for AnyEku {
+    fn validate(&self, _: webpki::KeyPurposeIdIter<'_, '_>) -> Result<(), webpki::Error> {
+        Ok(())
+    }
+}
+
+/// `remote-cert-tls server`: the server certificate must be meant for TLS
+/// servers. If it has an EKU extension, that must include serverAuth; if it
+/// has none, the old Netscape "SSL server" type is accepted too.
+fn check_server_eku(der: &CertificateDer<'_>) -> Result<()> {
+    let (_, cert) =
+        x509_parser::parse_x509_certificate(der).context("parsing server certificate")?;
+    match cert.extended_key_usage() {
+        Ok(Some(eku)) if eku.value.server_auth => Ok(()),
+        Ok(Some(_)) => bail!(
+            "the server certificate is not meant for VPN servers (no serverAuth key usage; remote-cert-tls server)"
+        ),
+        _ => {
+            let ns_server = cert.extensions().iter().any(|e| {
+                matches!(e.parsed_extension(),
+                    x509_parser::extensions::ParsedExtension::NSCertType(t) if t.ssl_server())
+            });
+            if !ns_server {
+                tracing::warn!(
+                    "server certificate has no extended key usage; accepting it because it is signed by the config's CA"
+                );
+            }
+            Ok(())
+        }
+    }
+}
 
 fn check_x509_name(der: &CertificateDer<'_>, want: &str, kind: &str) -> Result<()> {
     let (_, cert) =
