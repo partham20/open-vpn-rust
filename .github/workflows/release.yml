@@ -7,7 +7,7 @@ on:
     inputs:
       tag:
         description: Release tag to create
-        default: v0.1.0
+        default: v0.1.2
 
 permissions:
   contents: write
@@ -36,6 +36,8 @@ jobs:
           New-Item -ItemType Directory dist-zip | Out-Null
           Copy-Item target/release/ovpn.exe dist-zip/
           Copy-Item README.md dist-zip/
+          Copy-Item scripts/start-ovpn.ps1 dist-zip/
+          Copy-Item scripts/vpn.bat dist-zip/
           Compress-Archive dist-zip/* ovpn-windows-x86_64.zip
       - uses: actions/upload-artifact@v4
         with:
@@ -50,6 +52,8 @@ jobs:
           files: |
             ovpn-windows-x86_64.zip
             target/release/ovpn.exe
+            scripts/start-ovpn.ps1
+            scripts/vpn.bat
           body: |
             `ovpn.exe` for Windows x86_64: a portable OpenVPN client (TCP). It works on its own (the Wintun driver DLL is built in).
 
@@ -59,4 +63,6 @@ jobs:
             .\ovpn.exe .\Windscribe-TCP.ovpn
             ```
 
-            It asks for the OpenVPN username and password (or use `--auth-file creds.txt`). See the README for details.
+            It asks for the OpenVPN username and password (or use `--auth-file creds.txt`).
+
+            To run it in the background with no window, put `start-ovpn.ps1` and `vpn.bat` next to `ovpn.exe` and double-click `vpn.bat` (or run `vpn stop`, `vpn status`, `vpn install` for connect-at-boot). See the README for details.

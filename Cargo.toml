@@ -1,7 +1,7 @@
 [package]
 name = "ovpn"
 description = "A small portable OpenVPN client (TCP, tls-auth/tls-crypt, user/pass), aimed at Windows"
-version = "0.1.1"
+version = "0.1.2"
 edition = "2021"
 license = "BSD-3-Clause"
 

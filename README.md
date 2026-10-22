@@ -29,6 +29,30 @@ Tested against OpenVPN 2.6 servers. Made with Windscribe's configs in mind.
 To skip the prompt, put the username on line 1 and the password on line 2 of
 a text file, and pass `--auth-file creds.txt`. Keep that file private.
 
+## Running in the background (no window)
+
+Download `start-ovpn.ps1` and `vpn.bat` from the release and put them next to
+`ovpn.exe` and your `.ovpn` file (your Downloads folder works). Then:
+
+| Do this | To |
+| --- | --- |
+| double-click `vpn.bat` (or `vpn start`) | connect in the background, with no window |
+| `vpn stop` | disconnect |
+| `vpn status` | see whether it's running, plus the last log lines |
+| `vpn login` | enter the username and password again |
+| `vpn install` | also connect at every boot and keep reconnecting (`vpn uninstall` undoes it) |
+
+Each command asks for Administrator rights. The first run asks for the
+OpenVPN username and password and saves them in
+`C:\ProgramData\ovpn\auth.txt`, which only Administrators can read. The log
+is `C:\ProgramData\ovpn\ovpn.log`. If the folder has several `.ovpn` files,
+the newest is used; choose one with `vpn start -Config file.ovpn`. You can
+also run the script directly:
+`powershell -ExecutionPolicy Bypass -File .\start-ovpn.ps1 -Status`.
+
+`ovpn.exe` still shows up in Task Manager, like any program. It just has no
+window.
+
 ## Options
 
 ```
@@ -42,6 +66,8 @@ ovpn [CONFIG.ovpn] --no-tun [--ping 1.1.1.1] [--count 4]
 * `--no-redirect` keeps your normal internet. Only routes the server pushes go
   through the VPN.
 * `--no-dns` leaves DNS servers alone.
+* `--log-file FILE` appends the log to a file instead of the console (used by
+  the background scripts).
 * `-v` / `-vv` print debug or trace logs.
 
 It reconnects on its own if the connection drops (with back-off). It stops

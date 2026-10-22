@@ -70,6 +70,11 @@ struct Args {
     #[arg(short, long, action = clap::ArgAction::Count)]
     verbose: u8,
 
+    /// Write the log to this file (appending) instead of the console, for
+    /// running in the background.
+    #[arg(long)]
+    log_file: Option<PathBuf>,
+
     /// Derive data keys with the old PRF even if the server supports tls-ekm.
     #[arg(long, hide = true)]
     no_ekm: bool,
@@ -91,24 +96,52 @@ fn main() -> std::process::ExitCode {
         1 => "debug",
         _ => "trace",
     };
-    tracing_subscriber::fmt()
-        .with_env_filter(
-            tracing_subscriber::EnvFilter::try_from_default_env()
-                .unwrap_or_else(|_| format!("ovpn={level},warn").into()),
-        )
-        .with_target(false)
-        // Older Windows consoles print ANSI colour codes literally.
-        .with_ansi(!cfg!(windows))
-        .init();
+    let filter = tracing_subscriber::EnvFilter::try_from_default_env()
+        .unwrap_or_else(|_| format!("ovpn={level},warn").into());
+    let background = args.log_file.is_some();
+    match &args.log_file {
+        Some(path) => {
+            let file = match std::fs::OpenOptions::new()
+                .create(true)
+                .append(true)
+                .open(path)
+            {
+                Ok(f) => f,
+                Err(e) => {
+                    eprintln!("error: opening log file {}: {e}", path.display());
+                    return std::process::ExitCode::FAILURE;
+                }
+            };
+            tracing_subscriber::fmt()
+                .with_env_filter(filter)
+                .with_target(false)
+                .with_ansi(false)
+                .with_writer(std::sync::Mutex::new(file))
+                .init();
+        }
+        None => tracing_subscriber::fmt()
+            .with_env_filter(filter)
+            .with_target(false)
+            // Older Windows consoles print ANSI colour codes literally.
+            .with_ansi(!cfg!(windows))
+            .init(),
+    }
     let rt = tokio::runtime::Runtime::new().expect("tokio runtime");
     let code = match rt.block_on(run(args)) {
         Ok(()) => std::process::ExitCode::SUCCESS,
         Err(e) => {
-            eprintln!("error: {e:#}");
+            if background {
+                tracing::error!("{e:#}");
+            } else {
+                eprintln!("error: {e:#}");
+            }
             std::process::ExitCode::FAILURE
         }
     };
-    console::pause_if_own_console();
+    // Nobody is watching a background run's (hidden) window.
+    if !background {
+        console::pause_if_own_console();
+    }
     code
 }
 
@@ -141,6 +174,8 @@ fn find_config() -> Result<PathBuf> {
 }
 
 fn read_auth_file(text: &str) -> Result<Credentials> {
+    // Notepad may save the file with a UTF-8 byte order mark.
+    let text = text.strip_prefix('\u{feff}').unwrap_or(text);
     let mut lines = text.lines().map(str::trim);
     let username = lines.next().unwrap_or("").to_string();
     let password = lines.next().unwrap_or("").to_string();
